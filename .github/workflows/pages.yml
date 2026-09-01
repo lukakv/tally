@@ -1,0 +1,52 @@
+name: Deploy PWA
+
+# Publishes the app to GitHub Pages so it can be installed to a phone's home
+# screen.
+#
+# Manual-trigger only, because Pages cannot serve from a PRIVATE repository on
+# the GitHub Free plan. To use it: either make the repo public, or upgrade the
+# plan, then enable Settings -> Pages -> Source: GitHub Actions and run this
+# workflow from the Actions tab. Adding a `push` trigger back is fine once that
+# is sorted. Until then, any static host works — build locally with
+# `npm run build` and upload the dist/ folder.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # Project pages are served from /<repo>/, so the bundle needs that prefix.
+      - run: npm run build
+        env:
+          VITE_BASE: /${{ github.event.repository.name }}/
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,180 @@
+@import 'tailwindcss';
+
+/* ----------------------------------------------------------------
+   Palette
+   Brand accent is deliberately NOT green or red — those two hues are
+   reserved for money direction so they always mean one thing.
+   ---------------------------------------------------------------- */
+:root,
+[data-theme='dark'] {
+  --bg: #0a0b0d;
+  --bg-soft: #0f1114;
+  --surface: #15181d;
+  --surface-2: #1c2027;
+  --surface-3: #242932;
+  --line: #262b33;
+  --line-soft: #1d222a;
+  --text: #edeff3;
+  --text-dim: #939bab;
+  --text-faint: #626b7b;
+
+  --accent: #9b8cff;
+  --accent-soft: #2a2547;
+  --accent-ink: #0a0b0d;
+
+  --pos: #34d399;
+  --pos-soft: #10312a;
+  --neg: #fb7185;
+  --neg-soft: #3a1d27;
+  --save: #fbbf24;
+  --save-soft: #3a2c0e;
+
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  --shadow-sheet: 0 -8px 60px -12px rgb(0 0 0 / 0.8);
+  --scrim: rgb(0 0 0 / 0.6);
+}
+
+[data-theme='light'] {
+  --bg: #f6f6f9;
+  --bg-soft: #eeeef3;
+  --surface: #ffffff;
+  --surface-2: #f3f4f8;
+  --surface-3: #e9ebf1;
+  --line: #e2e4ec;
+  --line-soft: #edeef3;
+  --text: #14161a;
+  --text-dim: #5f6675;
+  --text-faint: #8c93a1;
+
+  --accent: #6d5de8;
+  --accent-soft: #eceafd;
+  --accent-ink: #ffffff;
+
+  --pos: #0d9f6e;
+  --pos-soft: #e2f6ee;
+  --neg: #e0415c;
+  --neg-soft: #fdeaed;
+  --save: #b8830a;
+  --save-soft: #fdf3dd;
+
+  --shadow-card: 0 1px 2px rgb(16 20 30 / 0.04), 0 8px 24px -14px rgb(16 20 30 / 0.18);
+  --shadow-sheet: 0 -8px 60px -12px rgb(16 20 30 / 0.24);
+  --scrim: rgb(16 20 30 / 0.32);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-soft: var(--bg-soft);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--line);
+  --color-line-soft: var(--line-soft);
+  --color-text: var(--text);
+  --color-dim: var(--text-dim);
+  --color-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-pos: var(--pos);
+  --color-pos-soft: var(--pos-soft);
+  --color-neg: var(--neg);
+  --color-neg-soft: var(--neg-soft);
+  --color-save: var(--save);
+  --color-save-soft: var(--save-soft);
+
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+    sans-serif;
+
+  --radius-card: 1.25rem;
+  --shadow-card: var(--shadow-card);
+  --shadow-sheet: var(--shadow-sheet);
+}
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    background: var(--bg);
+    /* keeps the overscroll gutter the same colour as the app */
+    color-scheme: dark;
+  }
+
+  [data-theme='light'] {
+    color-scheme: light;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior-y: none;
+  }
+
+  /* Money and any aligned figures must not jitter as digits change. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'cv05' 1;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+  }
+
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: none;
+    outline: none;
+  }
+
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  ::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+  }
+}
+
+@utility safe-t {
+  padding-top: env(safe-area-inset-top);
+}
+@utility safe-b {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Hairlines that stay 1 device-pixel on high-DPI phones. */
+@utility hairline-t {
+  border-top: 1px solid var(--line-soft);
+}
+@utility hairline-b {
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

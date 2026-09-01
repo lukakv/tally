@@ -1,0 +1,48 @@
+name: Android APK
+
+# Builds a sideloadable .apk in the cloud so nothing has to be installed
+# locally. Grab it from the run's Artifacts section when it finishes.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      # The android/ project is generated here rather than committed, so the
+      # repository stays a plain web app.
+      - name: Generate the Android project
+        run: |
+          npx cap add android
+          npx --yes @capacitor/assets generate --android
+          npx cap sync android
+
+      - name: Assemble debug APK
+        run: ./gradlew assembleDebug --no-daemon
+        working-directory: android
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tally-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
