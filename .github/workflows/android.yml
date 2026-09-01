@@ -15,7 +15,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -30,15 +30,18 @@ jobs:
       - uses: android-actions/setup-android@v3
 
       # The android/ project is generated here rather than committed, so the
-      # repository stays a plain web app.
+      # repository stays a plain web app. @capacitor/assets reads the source
+      # icon and splash from resources/ and fans them out to every density.
       - name: Generate the Android project
         run: |
           npx cap add android
-          npx --yes @capacitor/assets generate --android
+          npx capacitor-assets generate --android
           npx cap sync android
 
       - name: Assemble debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        run: |
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
         working-directory: android
 
       - uses: actions/upload-artifact@v4
