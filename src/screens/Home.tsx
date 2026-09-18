@@ -10,13 +10,13 @@ import {
   Settings,
   Users,
 } from 'lucide-react'
-import { currentMonthKey, monthLabel } from '../lib/date'
+import { currentMonthKey, monthLabel, shiftMonth } from '../lib/date'
 import {
   budgetRows,
   budgetTotals,
   monthSummary,
   personBalances,
-  savingsState,
+  savingsOverview,
   splitOverview,
 } from '../lib/selectors'
 import { useStore } from '../lib/store'
@@ -45,7 +45,10 @@ export function Home() {
   const settlements = useStore((s) => s.settlements)
   const budgets = useStore((s) => s.budgets)
   const overrides = useStore((s) => s.budgetOverrides)
-  const openingSavings = useStore((s) => s.settings.openingSavings)
+  const savingsPots = useStore((s) => s.savingsPots)
+  const savingsEntries = useStore((s) => s.savingsEntries)
+  const mainCurrency = useStore((s) => s.settings.currency)
+  const rates = useStore((s) => s.settings.rates)
 
   const setTab = useUI((s) => s.setTab)
   const setMonth = useUI((s) => s.setMonth)
@@ -56,9 +59,31 @@ export function Home() {
   const month = currentMonthKey()
 
   const summary = useMemo(() => monthSummary(transactions, month), [transactions, month])
+  const lastMonth = useMemo(
+    () => monthSummary(transactions, shiftMonth(month, -1)),
+    [transactions, month],
+  )
+
+  /**
+   * Plenty of people only ever log what they spend. Showing them a large
+   * negative "left this month" — income minus spending, with no income — is
+   * both alarming and useless, so the headline follows the data: without any
+   * income recorded it simply reports the spending.
+   */
+  const trackingIncome = summary.income > 0
+  const heroLabel = trackingIncome ? 'Left this month' : 'Spent this month'
+  const heroValue = trackingIncome ? summary.left : summary.spent
+
+  /** How this month's spending compares with the last one, once both exist. */
+  const versusLast = useMemo(() => {
+    if (lastMonth.spent === 0 || summary.spent === 0) return null
+    const diff = summary.spent - lastMonth.spent
+    if (Math.abs(diff) < 100) return null // under a unit of currency is noise
+    return { diff, label: monthLabel(shiftMonth(month, -1)) }
+  }, [summary.spent, lastMonth.spent, month])
   const savings = useMemo(
-    () => savingsState(transactions, openingSavings, month),
-    [transactions, openingSavings, month],
+    () => savingsOverview(savingsPots, transactions, savingsEntries, mainCurrency, rates, month),
+    [savingsPots, transactions, savingsEntries, mainCurrency, rates, month],
   )
   const balances = useMemo(
     () => personBalances(transactions, settlements, people),
@@ -101,17 +126,29 @@ export function Home() {
         <motion.div variants={riseItem}>
           <Card className="overflow-hidden p-5">
             <p className="text-[12px] font-semibold tracking-[0.09em] text-faint uppercase">
-              Left this month
+              {heroLabel}
             </p>
             <div className="mt-1.5 flex items-baseline gap-2">
               <AnimatedMoney
-                value={summary.left}
-                tone={summary.left < 0 ? 'neg' : 'plain'}
+                value={heroValue}
+                tone={trackingIncome && heroValue < 0 ? 'neg' : 'plain'}
                 className="text-[38px] leading-none font-semibold tracking-[-0.03em]"
               />
             </div>
 
-            <div className="mt-4">
+            {versusLast && (
+              <p className="mt-1.5 text-[12.5px] text-faint">
+                <Money
+                  value={Math.abs(versusLast.diff)}
+                  tone={versusLast.diff > 0 ? 'neg' : 'pos'}
+                  compactCents
+                  className="text-[12.5px] font-medium"
+                />{' '}
+                {versusLast.diff > 0 ? 'more' : 'less'} than {versusLast.label}
+              </p>
+            )}
+
+            <div className={trackingIncome ? 'mt-4' : 'hidden'}>
               <SplitBar
                 segments={[
                   { value: summary.spent - summary.fromSavings, color: 'var(--neg)', label: 'Spent' },
@@ -163,7 +200,7 @@ export function Home() {
                   Savings
                 </p>
                 <AnimatedMoney
-                  value={savings.balance}
+                  value={savings.total}
                   tone="save"
                   className="text-[22px] leading-tight font-semibold tracking-[-0.02em]"
                 />

@@ -3,16 +3,28 @@ import { formatMoney, splitEvenly, toMinor } from './money'
 import {
   budgetRows,
   budgetTotals,
-  categoryTotals,
+  cashFlow,
   cashOut,
+  categoryTotals,
+  convert,
   monthSummary,
   myShare,
   personBalances,
-  savingsState,
+  potState,
+  savingsOverview,
   splitOverview,
 } from './selectors'
+import { migrate } from './store'
 import { DEFAULT_CATEGORIES, SAVINGS_CATEGORY_ID } from './seed'
-import { ME, type Person, type Settlement, type Transaction } from './types'
+import {
+  ME,
+  MAIN_POT_ID,
+  type Person,
+  type SavingsEntry,
+  type SavingsPot,
+  type Settlement,
+  type Transaction,
+} from './types'
 
 /* --------------------------------- fixtures -------------------------------- */
 
@@ -195,18 +207,60 @@ describe('month summary', () => {
 
 /* --------------------------------- savings --------------------------------- */
 
-describe('savings', () => {
-  it('adds contributions and subtracts withdrawals from the opening balance', () => {
-    const s = savingsState(monthTx, 50000, MONTH)
-    expect(s.opening).toBe(50000)
-    expect(s.contributed).toBe(30000)
-    expect(s.withdrawn).toBe(15000)
-    expect(s.balance).toBe(65000)
-    expect(s.monthNet).toBe(15000)
+const GEL_POT: SavingsPot = {
+  id: MAIN_POT_ID,
+  name: 'Savings',
+  currency: 'GEL',
+  color: '#FBBF24',
+  opening: 50000,
+}
+const USD_POT: SavingsPot = {
+  id: 'pot-usd',
+  name: 'Dollars',
+  currency: 'USD',
+  color: '#2DD4BF',
+  opening: 200000,
+}
+
+/** the fixture month's savings transactions all target the main pot */
+const potted = monthTx.map((t) =>
+  t.isSaving || t.account === 'savings' ? { ...t, savingsPotId: MAIN_POT_ID } : t,
+)
+
+function entry(e: Partial<SavingsEntry> & Pick<SavingsEntry, 'potId' | 'amount' | 'date'>) {
+  seq += 1
+  return { id: 'e' + seq, createdAt: seq, ...e } as SavingsEntry
+}
+
+describe('a savings pot', () => {
+  it('starts from what was already in it and tracks movements separately', () => {
+    const st = potState(GEL_POT, potted, [], 'GEL', {}, MONTH)
+    expect(st.opening).toBe(50000)
+    expect(st.addedIn).toBe(30000) // the 300 set aside this month
+    expect(st.takenOut).toBe(15000) // the 150 dentist
+    expect(st.balance).toBe(65000)
+    expect(st.monthNet).toBe(15000)
   })
 
-  it('withdraws what actually left the pot, not just my share', () => {
-    // I paid ₾100 out of savings and split it with Nika: ₾100 left the pot.
+  it('counts money recorded straight on the pot, in the pot currency', () => {
+    const entries = [
+      entry({ potId: USD_POT.id, amount: 20000, date: '2026-09-04' }),
+      entry({ potId: USD_POT.id, amount: -5000, date: '2026-09-05' }),
+    ]
+    const st = potState(USD_POT, potted, entries, 'GEL', { USD: 2.7 }, MONTH)
+    expect(st.opening).toBe(200000)
+    expect(st.addedIn).toBe(20000)
+    expect(st.takenOut).toBe(5000)
+    expect(st.balance).toBe(215000)
+    expect(st.monthNet).toBe(15000)
+  })
+
+  it('ignores movements belonging to another pot', () => {
+    const entries = [entry({ potId: USD_POT.id, amount: 99999, date: '2026-09-04' })]
+    expect(potState(GEL_POT, potted, entries, 'GEL', {}, MONTH).balance).toBe(65000)
+  })
+
+  it('takes out what actually left the pot, not just my share', () => {
     const t = [
       tx({
         kind: 'expense',
@@ -214,13 +268,14 @@ describe('savings', () => {
         date: '2026-09-03',
         categoryId: 'cat-health',
         account: 'savings',
+        savingsPotId: MAIN_POT_ID,
         split: { paidBy: ME, shares: [{ who: ME, amount: 5000 }, { who: NIKA, amount: 5000 }] },
       }),
     ]
-    expect(savingsState(t, 20000).balance).toBe(10000)
+    expect(potState({ ...GEL_POT, opening: 20000 }, t, [], 'GEL', {}).balance).toBe(10000)
   })
 
-  it('does not touch savings when someone else paid the savings-funded bill', () => {
+  it('leaves the pot alone when somebody else paid the savings-funded bill', () => {
     const t = [
       tx({
         kind: 'expense',
@@ -228,10 +283,210 @@ describe('savings', () => {
         date: '2026-09-03',
         categoryId: 'cat-health',
         account: 'savings',
+        savingsPotId: MAIN_POT_ID,
         split: { paidBy: NIKA, shares: [{ who: ME, amount: 5000 }, { who: NIKA, amount: 5000 }] },
       }),
     ]
-    expect(savingsState(t, 20000).balance).toBe(20000)
+    expect(potState({ ...GEL_POT, opening: 20000 }, t, [], 'GEL', {}).balance).toBe(20000)
+  })
+})
+
+describe('savings across currencies', () => {
+  const entries = [entry({ potId: USD_POT.id, amount: 20000, date: '2026-09-04' })]
+
+  it('converts each pot at the rate you set and adds them up', () => {
+    const o = savingsOverview([GEL_POT, USD_POT], potted, entries, 'GEL', { USD: 2.7 }, MONTH)
+    expect(o.total).toBe(65000 + 594000)
+    expect(o.multiCurrency).toBe(true)
+    expect(o.missingRates).toEqual([])
+  })
+
+  it('separates what was already had from what has been added since', () => {
+    const o = savingsOverview([GEL_POT, USD_POT], potted, entries, 'GEL', { USD: 2.7 }, MONTH)
+    expect(o.totalOpening).toBe(50000 + 200000 * 2.7)
+    expect(o.totalAdded).toBe(30000 + 20000 * 2.7)
+  })
+
+  it('leaves a pot out of the total rather than guess a rate', () => {
+    const o = savingsOverview([GEL_POT, USD_POT], potted, entries, 'GEL', {}, MONTH)
+    expect(o.total).toBe(65000)
+    expect(o.missingRates).toEqual(['USD'])
+    expect(o.pots.find((x) => x.pot.id === USD_POT.id)?.balance).toBe(220000)
+    expect(o.pots.find((x) => x.pot.id === USD_POT.id)?.inMain).toBeNull()
+  })
+
+  it('needs no rate when everything is in one currency', () => {
+    const o = savingsOverview([GEL_POT], potted, [], 'GEL', {}, MONTH)
+    expect(o.multiCurrency).toBe(false)
+    expect(o.total).toBe(65000)
+    expect(o.missingRates).toEqual([])
+  })
+
+  it('refuses to convert without a usable rate', () => {
+    expect(convert(1000, 'USD', 'GEL', {})).toBeNull()
+    expect(convert(1000, 'USD', 'GEL', { USD: 0 })).toBeNull()
+    expect(convert(1000, 'USD', 'GEL', { USD: Number.NaN })).toBeNull()
+    expect(convert(1000, 'GEL', 'GEL', {})).toBe(1000)
+    expect(convert(1000, 'USD', 'GEL', { USD: 2.7 })).toBe(2700)
+  })
+})
+
+describe('upgrading older data', () => {
+  it('turns a v1 single savings figure into the main pot', () => {
+    const old = {
+      transactions: [{ ...monthTx[7] }, { ...monthTx[8] }],
+      settings: { currency: 'GEL', openingSavings: 50000 },
+    }
+    const upgraded = migrate(old)
+
+    expect(upgraded.savingsPots).toHaveLength(1)
+    expect(upgraded.savingsPots[0].currency).toBe('GEL')
+    expect(upgraded.savingsPots[0].opening).toBe(50000)
+    expect(
+      upgraded.transactions.every((t) => t.savingsPotId === upgraded.savingsPots[0].id),
+    ).toBe(true)
+    // the balance survives the move unchanged
+    expect(potState(upgraded.savingsPots[0], upgraded.transactions, [], 'GEL', {}).balance).toBe(
+      65000,
+    )
+    expect('openingSavings' in upgraded.settings).toBe(false)
+  })
+
+  it('always leaves a pot in the main currency for transfers to land in', () => {
+    const upgraded = migrate({ savingsPots: [USD_POT], settings: { currency: 'GEL' } })
+    expect(upgraded.savingsPots.some((p) => p.currency === 'GEL')).toBe(true)
+  })
+
+  it('carries a current backup through untouched', () => {
+    // Restore runs the same migration as a version upgrade, so a fresh backup
+    // has to survive it byte for byte — this is the only safety net there is.
+    const backup = {
+      version: 2,
+      transactions: potted,
+      categories: DEFAULT_CATEGORIES,
+      people,
+      settlements: [{ id: 's1', personId: NIKA, amount: -1400, date: '2026-09-05', createdAt: 1 }],
+      savingsPots: [GEL_POT, USD_POT],
+      savingsEntries: [entry({ potId: USD_POT.id, amount: 20000, date: '2026-09-04' })],
+      budgets: { 'cat-groceries': 40000 },
+      budgetOverrides: { '2026-09:cat-fun': 5000 },
+      settings: {
+        currency: 'GEL',
+        theme: 'dark' as const,
+        haptics: true,
+        onboarded: true,
+        rates: { USD: 2.7 },
+      },
+    }
+
+    const restored = migrate(backup)
+
+    expect(restored.transactions).toEqual(backup.transactions)
+    expect(restored.savingsPots).toEqual(backup.savingsPots)
+    expect(restored.savingsEntries).toEqual(backup.savingsEntries)
+    expect(restored.settlements).toEqual(backup.settlements)
+    expect(restored.budgets).toEqual(backup.budgets)
+    expect(restored.budgetOverrides).toEqual(backup.budgetOverrides)
+    expect(restored.people).toEqual(backup.people)
+    expect(restored.settings).toEqual(backup.settings)
+
+    // and every figure it drives comes out the same
+    expect(savingsOverview(restored.savingsPots, restored.transactions, restored.savingsEntries, 'GEL', restored.settings.rates).total).toBe(
+      savingsOverview(backup.savingsPots, backup.transactions, backup.savingsEntries, 'GEL', backup.settings.rates).total,
+    )
+  })
+
+  it('fills in the blanks for an empty or unknown payload', () => {
+    const upgraded = migrate({})
+    expect(upgraded.savingsPots).toHaveLength(1)
+    expect(upgraded.savingsEntries).toEqual([])
+    expect(upgraded.settings.rates).toEqual({})
+    expect(upgraded.categories.length).toBeGreaterThan(0)
+  })
+})
+
+
+/* ------------------- what the Add money sheet produces -------------------- */
+
+/**
+ * The savings sheet offers exactly one meaningful choice — is this money coming
+ * out of THIS MONTH, or is it money you already had? These lock in what each
+ * branch must do, because getting them the wrong way round would quietly
+ * corrupt both the savings balance and the month.
+ */
+describe('adding money to savings', () => {
+  const pot: SavingsPot = { ...GEL_POT, opening: 0 }
+
+  it('money you already had lands in the pot and leaves the month alone', () => {
+    // the sheet writes a SavingsEntry for this branch
+    const entries = [entry({ potId: pot.id, amount: 25000, date: '2026-09-20' })]
+
+    expect(potState(pot, [], entries, 'GEL', {}, MONTH).balance).toBe(25000)
+    // nothing in the ledger, so the month cannot have moved
+    const s = monthSummary([], MONTH)
+    expect(s.saved).toBe(0)
+    expect(s.left).toBe(0)
+  })
+
+  it('money out of this month counts as Saved and comes off what is left', () => {
+    // the sheet writes a Transaction for this branch
+    const ledger = [
+      tx({ kind: 'income', amount: 100000, date: '2026-09-01', categoryId: 'cat-salary' }),
+      tx({
+        kind: 'expense',
+        amount: 25000,
+        date: '2026-09-20',
+        categoryId: SAVINGS_CATEGORY_ID,
+        isSaving: true,
+        savingsPotId: pot.id,
+      }),
+    ]
+
+    expect(potState(pot, ledger, [], 'GEL', {}, MONTH).balance).toBe(25000)
+
+    const s = monthSummary(ledger, MONTH)
+    expect(s.saved).toBe(25000)
+    expect(s.spent).toBe(0) // setting money aside is never spending
+    expect(s.left).toBe(75000)
+  })
+
+  it('reaches the same balance either way, but only one touches the month', () => {
+    const viaEntry = potState(
+      pot,
+      [],
+      [entry({ potId: pot.id, amount: 25000, date: '2026-09-20' })],
+      'GEL',
+      {},
+    ).balance
+    const viaLedger = potState(
+      pot,
+      [
+        tx({
+          kind: 'expense',
+          amount: 25000,
+          date: '2026-09-20',
+          categoryId: SAVINGS_CATEGORY_ID,
+          isSaving: true,
+          savingsPotId: pot.id,
+        }),
+      ],
+      [],
+      'GEL',
+      {},
+    ).balance
+
+    expect(viaEntry).toBe(viaLedger)
+  })
+
+  it('taking money out is the same entry with the sign flipped', () => {
+    const entries = [
+      entry({ potId: pot.id, amount: 25000, date: '2026-09-20' }),
+      entry({ potId: pot.id, amount: -10000, date: '2026-09-21' }),
+    ]
+    const st = potState(pot, [], entries, 'GEL', {}, MONTH)
+    expect(st.addedIn).toBe(25000)
+    expect(st.takenOut).toBe(10000)
+    expect(st.balance).toBe(15000)
   })
 })
 
@@ -367,5 +622,39 @@ describe('budgets', () => {
     expect(t.budget).toBe(71000)
     expect(t.spent).toBe(4550 + 1600 + 1200)
     expect(t.overCount).toBe(1)
+  })
+})
+
+/* ----------------------- cross-screen reconciliation ---------------------- */
+
+/**
+ * Regression guard for a reported bug: the per-day totals on Activity were
+ * computed inline with a different rule from the headline on Home, so the two
+ * screens disagreed whenever savings were involved.
+ */
+describe('every screen agrees on the month', () => {
+  const s = monthSummary(monthTx, MONTH)
+
+  it('Activity day totals add up to the figure Home shows as Left', () => {
+    const perDay = new Map<string, number>()
+    for (const t of monthTx) {
+      if (t.date.slice(0, 7) !== MONTH) continue
+      perDay.set(t.date, (perDay.get(t.date) ?? 0) + cashFlow(t))
+    }
+    const summed = [...perDay.values()].reduce((a, b) => a + b, 0)
+    expect(summed).toBe(s.left)
+  })
+
+  it('category totals add up to what was spent and saved', () => {
+    const rows = categoryTotals(monthTx, DEFAULT_CATEGORIES, MONTH, 'expense')
+    const savings = rows.filter((r) => r.category.system === 'savings')
+    const spending = rows.filter((r) => r.category.system !== 'savings')
+    expect(spending.reduce((a, r) => a + r.total, 0)).toBe(s.spent)
+    expect(savings.reduce((a, r) => a + r.total, 0)).toBe(s.saved)
+  })
+
+  it('income sources add up to the income figure', () => {
+    const rows = categoryTotals(monthTx, DEFAULT_CATEGORIES, MONTH, 'income')
+    expect(rows.reduce((a, r) => a + r.total, 0)).toBe(s.income)
   })
 })

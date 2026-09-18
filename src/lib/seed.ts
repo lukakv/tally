@@ -1,4 +1,4 @@
-import type { Category, Settings } from './types'
+import { MAIN_POT_ID, type Category, type SavingsPot, type Settings } from './types'
 
 export const SAVINGS_CATEGORY_ID = 'cat-savings'
 
@@ -48,9 +48,25 @@ export const PERSON_COLORS = [
 export const DEFAULT_SETTINGS: Settings = {
   currency: 'GEL',
   theme: 'dark',
-  openingSavings: 0,
   haptics: true,
   onboarded: false,
+  rates: {},
+}
+
+export const POT_COLORS = ['#FBBF24', '#2DD4BF', '#8B9BFF', '#F472B6', '#B7DF52', '#FF9F45']
+
+/**
+ * There is always at least one pot in the main currency — monthly transfers
+ * into savings have to land somewhere, and they are never converted.
+ */
+export function defaultPot(currency: string, opening = 0): SavingsPot {
+  return {
+    id: MAIN_POT_ID,
+    name: 'Savings',
+    currency,
+    color: POT_COLORS[0],
+    opening,
+  }
 }
 
 export const CURRENCIES: { code: string; symbol: string; name: string }[] = [

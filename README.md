@@ -1,8 +1,8 @@
 # Tally
 
 A small, private finance tracker for a phone. Income, daily spending by category,
-budgets against reality, shared costs with other people, and a savings pot that is
-kept separate from spending.
+budgets against reality, shared costs with other people, and savings kept in as many
+currencies as you hold — always separate from spending.
 
 Everything lives on the device. No account, no server, no network calls.
 
@@ -97,18 +97,40 @@ income or expense.
 
 **2. Savings is a transfer between your own pots, not spending.**
 
-- Log an expense under the **Savings** category → the money leaves your monthly
-  cash and *increases* the savings balance. It shows as **Saved**, not **Spent**.
-- Tick **From savings** on any expense → it counts as real spending, but comes out
-  of the savings balance instead of this month's income.
-- **Starting balance** (Savings screen, or during onboarding) is whatever you had
-  saved before you started using the app.
+Savings live in **pots**, and a pot holds exactly one currency — so lari, dollars
+and euros are tracked side by side rather than mashed together. Money moves
+through a pot in one of two ways, and the difference is the only thing the rest
+of the app cares about:
+
+| | What it does |
+|---|---|
+| **Money you already had** | Recorded straight on the pot, in the pot's own currency. Does not touch any monthly total. This is how you enter savings you already hold, or move money in from elsewhere. |
+| **Out of this month's money** | Leaves this month's cash and shows as **Saved**, never as **Spent**. Only possible for a pot in your main currency — the ledger has no other. |
+
+Taking money out works the same way in reverse. If you actually *spent* it, log
+that as a normal expense and tick **From savings**: it counts as real spending,
+but comes out of the pot rather than this month's income.
+
+Each pot separates **what was already in it** from **what has been added since**,
+which is what the two figures at the top of the Savings screen report.
+
+**Combined totals are at rates you set yourself.** Tally never goes online, so
+there are no live exchange rates. Enter one per currency under *Rates*; a pot
+with no rate keeps its own balance but stays out of the combined total, and says
+so, rather than being folded in at a number nobody chose.
 
 So the headline figure on the home screen is:
 
 ```
 Left = Income − Spent − Saved + (whatever was funded from savings)
 ```
+
+…and if no income has been recorded for the month, the headline simply reports
+what you have spent instead. Plenty of people only track spending, and showing
+them a large negative "left" would be alarming and useless.
+
+Every running total — the per-day figures on Activity included — goes through the
+same `cashFlow` rule, so no two screens can disagree about the same month.
 
 Every amount is stored as a whole number of tetri/cents, so totals never drift the
 way floating-point money does. Split shares always add back up to the exact total —
@@ -148,7 +170,8 @@ src/
     seed.ts         default categories, currencies
     accounting.test.ts
   ui/               reusable pieces (Sheet, Money, Segmented, toasts…)
-  components/       app-specific pieces (entry sheet, keypad, split editor…)
+  components/       app-specific pieces (entry sheet, keypad, split editor,
+                    savings movement + pot sheets…)
   screens/          Home, Activity, Report, Split, Savings, Settings, Onboarding
 ```
 

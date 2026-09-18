@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { Inbox } from 'lucide-react'
-import { activeMonths, monthSummary, myShare } from '../lib/selectors'
-import { currentMonthKey, dayLabel, monthKeyOf } from '../lib/date'
+import { Inbox, Search, X } from 'lucide-react'
+import { activeMonths, cashFlow, monthSummary, myShare } from '../lib/selectors'
+import { currentMonthKey, dayLabel, monthKeyOf, monthLabel } from '../lib/date'
 import { useStore } from '../lib/store'
 import { useUI } from '../lib/ui'
 import type { Transaction } from '../lib/types'
@@ -10,7 +10,9 @@ import { Money } from '../ui/Money'
 import { Button, Card, Chip, EmptyState } from '../ui/primitives'
 import { Segmented } from '../ui/Segmented'
 import { MonthNav } from '../ui/MonthNav'
+import { haptic } from '../ui/haptics'
 import { springSoft } from '../ui/motion'
+import { cx } from '../ui/cx'
 import { Screen, ScreenTitle } from '../components/Screen'
 import { TransactionRow } from '../components/TransactionRow'
 
@@ -25,6 +27,8 @@ export function Activity() {
 
   const [filter, setFilter] = useState<Filter>('all')
   const [categoryId, setCategoryId] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [searching, setSearching] = useState(false)
 
   const months = useMemo(
     () => activeMonths(transactions, currentMonthKey()),
@@ -43,14 +47,19 @@ export function Activity() {
     return categories.filter((c) => ids.has(c.id))
   }, [inMonth, categories, filter])
 
-  const visible = useMemo(
-    () =>
-      inMonth
-        .filter((t) => (filter === 'all' ? true : t.kind === filter))
-        .filter((t) => (categoryId ? t.categoryId === categoryId : true))
-        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.createdAt - a.createdAt)),
-    [inMonth, filter, categoryId],
-  )
+  const visible = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    const nameOf = (id: string) => categories.find((c) => c.id === id)?.name.toLowerCase() ?? ''
+    return inMonth
+      .filter((t) => (filter === 'all' ? true : t.kind === filter))
+      .filter((t) => (categoryId ? t.categoryId === categoryId : true))
+      .filter((t) =>
+        needle
+          ? (t.note ?? '').toLowerCase().includes(needle) || nameOf(t.categoryId).includes(needle)
+          : true,
+      )
+      .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.createdAt - a.createdAt))
+  }, [inMonth, filter, categoryId, query, categories])
 
   const days = useMemo(() => {
     const map = new Map<string, Transaction[]>()
@@ -62,17 +71,54 @@ export function Activity() {
     return [...map.entries()]
   }, [visible])
 
-  const filteredTotal = visible.reduce(
-    (sum, t) => sum + (t.kind === 'income' ? myShare(t) : -myShare(t)),
-    0,
-  )
+  // When a category filter is on, the interesting number is what that category
+  // cost, not its effect on the month — so this one stays a plain sum.
+  const filteredTotal = visible.reduce((sum, t) => sum + myShare(t), 0)
 
   return (
     <Screen>
       <ScreenTitle
         title="Activity"
         sub={`${summary.expenseCount + summary.incomeCount} entries this month`}
+        right={
+          <button
+            onClick={() => {
+              haptic('tap')
+              setSearching((v) => !v)
+              if (searching) setQuery('')
+            }}
+            aria-label={searching ? 'Close search' : 'Search entries'}
+            className={cx(
+              'grid size-10 place-items-center rounded-full ring-1 transition-colors',
+              searching
+                ? 'bg-accent-soft text-accent ring-accent/30'
+                : 'bg-surface text-dim ring-line/50',
+            )}
+          >
+            {searching ? <X size={18} strokeWidth={2.2} /> : <Search size={18} strokeWidth={2.2} />}
+          </button>
+        }
       />
+
+      <AnimatePresence initial={false}>
+        {searching && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={springSoft}
+            className="overflow-hidden"
+          >
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search notes and categories"
+              className="mb-3 h-11 w-full rounded-2xl bg-surface-2 px-4 text-[14.5px] ring-1 ring-line/50 placeholder:text-faint focus:ring-accent/50"
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="mb-3">
         <MonthNav month={month} onChange={setMonth} months={months} />
@@ -141,9 +187,11 @@ export function Activity() {
             icon={<Inbox size={22} strokeWidth={1.9} />}
             title="Nothing here"
             hint={
-              categoryId || filter !== 'all'
-                ? 'No entries match this filter for the month.'
-                : 'No entries logged for this month yet.'
+              query.trim()
+                ? `Nothing in ${monthLabel(month)} matches "${query.trim()}".`
+                : categoryId || filter !== 'all'
+                  ? 'No entries match this filter for the month.'
+                  : 'No entries logged for this month yet.'
             }
             action={
               <Button variant="primary" onClick={() => openEntry()}>
@@ -155,10 +203,7 @@ export function Activity() {
       ) : (
         <motion.div layout className="space-y-4">
           {days.map(([date, list]) => {
-            const dayTotal = list.reduce(
-              (sum, t) => sum + (t.kind === 'income' ? myShare(t) : -myShare(t)),
-              0,
-            )
+            const dayTotal = list.reduce((sum, t) => sum + cashFlow(t), 0)
             return (
               <motion.section layout key={date} transition={springSoft}>
                 <div className="mb-2 flex items-baseline justify-between px-2">

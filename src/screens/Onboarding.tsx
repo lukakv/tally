@@ -18,12 +18,17 @@ import { cx } from '../ui/cx'
 export function Onboarding() {
   const onboarded = useStore((s) => s.settings.onboarded)
   const currency = useStore((s) => s.settings.currency)
+  const pots = useStore((s) => s.savingsPots)
   const updateSettings = useStore((s) => s.updateSettings)
+  const updatePot = useStore((s) => s.updatePot)
 
   const [raw, setRaw] = useState('')
 
   function finish() {
-    updateSettings({ onboarded: true, openingSavings: toMinor(raw || '0') })
+    updateSettings({ onboarded: true })
+    // the starting figure belongs to the pot the money is actually in
+    const target = pots.find((p) => p.currency === currency && !p.archived) ?? pots[0]
+    if (target) updatePot(target.id, { opening: toMinor(raw || '0') })
     haptic('success')
   }
 
@@ -72,6 +77,10 @@ export function Onboarding() {
                   onClick={() => {
                     haptic('select')
                     updateSettings({ currency: c.code })
+                    // nothing has been recorded yet, so the default pot simply
+                    // follows whichever currency is picked here
+                    const target = pots.find((p) => p.currency === currency) ?? pots[0]
+                    if (target) updatePot(target.id, { currency: c.code })
                   }}
                   className={cx(
                     'flex h-11 items-center gap-2 rounded-full px-4 text-[13.5px] font-medium transition-colors',

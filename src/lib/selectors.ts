@@ -1,5 +1,13 @@
 import { monthKeyOf, type MonthKey } from './date'
-import { ME, type Category, type Person, type Settlement, type Transaction } from './types'
+import {
+  ME,
+  type Category,
+  type Person,
+  type SavingsEntry,
+  type SavingsPot,
+  type Settlement,
+  type Transaction,
+} from './types'
 
 /* ------------------------------------------------------------------ *
  * Accounting model
@@ -38,6 +46,25 @@ export function isContribution(tx: Transaction): boolean {
 /** True for an expense funded out of the savings pot. */
 export function isWithdrawal(tx: Transaction): boolean {
   return tx.kind === 'expense' && tx.account === 'savings' && !tx.isSaving
+}
+
+/**
+ * What one transaction does to the money this month had available.
+ *
+ * Every running total in the app goes through here, so the per-day figures on
+ * Activity and the headline on Home cannot drift apart. The two cases that are
+ * easy to get wrong:
+ *
+ *   - a transfer into savings spends nothing, but it does leave this month's
+ *     pocket, so it counts against you;
+ *   - an expense funded FROM savings is real spending, but it consumed the pot
+ *     rather than this month's income, so it counts for nothing here.
+ */
+export function cashFlow(tx: Transaction): number {
+  if (tx.kind === 'income') return tx.amount
+  if (isContribution(tx)) return -tx.amount
+  if (isWithdrawal(tx)) return 0
+  return -myShare(tx)
 }
 
 /** Signed effect of one transaction on my balance with a person. + they owe me. */
@@ -232,45 +259,146 @@ export function budgetTotals(rows: BudgetRow[]): BudgetTotals {
 
 /* ------------------------------ savings ------------------------------ */
 
-export interface SavingsState {
-  balance: number
-  contributed: number
-  withdrawn: number
-  opening: number
-  /** contributions minus withdrawals inside the given month */
-  monthNet: number
+/**
+ * Savings are held in pots, and a pot holds exactly one currency. Two things
+ * move money through a pot:
+ *
+ *   - a savings ENTRY, recorded straight on the pot in the pot's own currency.
+ *     This is money you already had, or money moved in or out from elsewhere.
+ *     It never touches a monthly total.
+ *   - a TRANSACTION, which is always in the main currency. Setting money aside
+ *     this month, or spending out of the pot, both show up in the month.
+ */
+
+/**
+ * Value of `amount` (in `from`) expressed in the main currency.
+ * null when the rate has not been entered — better a visible gap than a
+ * confidently wrong total.
+ */
+export function convert(
+  amount: number,
+  from: string,
+  main: string,
+  rates: Record<string, number>,
+): number | null {
+  if (from === main) return amount
+  const rate = rates[from]
+  if (!rate || !Number.isFinite(rate) || rate <= 0) return null
+  return Math.round(amount * rate)
 }
 
-export function savingsState(
+export interface PotState {
+  pot: SavingsPot
+  /** all figures below are in the pot's own currency */
+  balance: number
+  opening: number
+  addedIn: number
+  takenOut: number
+  monthNet: number
+  /** balance in the main currency, or null when no rate has been set */
+  inMain: number | null
+}
+
+export function potState(
+  pot: SavingsPot,
   transactions: Transaction[],
-  opening: number,
+  entries: SavingsEntry[],
+  main: string,
+  rates: Record<string, number>,
   month?: MonthKey,
-): SavingsState {
-  let contributed = 0
-  let withdrawn = 0
-  let monthIn = 0
-  let monthOut = 0
+): PotState {
+  let addedIn = 0
+  let takenOut = 0
+  let monthNet = 0
+
+  for (const e of entries) {
+    if (e.potId !== pot.id) continue
+    if (e.amount >= 0) addedIn += e.amount
+    else takenOut += -e.amount
+    if (month && monthKeyOf(e.date) === month) monthNet += e.amount
+  }
 
   for (const t of transactions) {
-    if (t.kind !== 'expense') continue
+    if (t.kind !== 'expense' || t.savingsPotId !== pot.id) continue
     const inMonth = month ? monthKeyOf(t.date) === month : false
     if (isContribution(t)) {
-      contributed += t.amount
-      if (inMonth) monthIn += t.amount
+      addedIn += t.amount
+      if (inMonth) monthNet += t.amount
     } else if (isWithdrawal(t)) {
       // what actually left the pot, not just my share of it
-      withdrawn += cashOut(t)
-      if (inMonth) monthOut += cashOut(t)
+      const out = cashOut(t)
+      takenOut += out
+      if (inMonth) monthNet -= out
     }
   }
 
+  const balance = pot.opening + addedIn - takenOut
   return {
-    balance: opening + contributed - withdrawn,
-    contributed,
-    withdrawn,
-    opening,
-    monthNet: monthIn - monthOut,
+    pot,
+    balance,
+    opening: pot.opening,
+    addedIn,
+    takenOut,
+    monthNet,
+    inMain: convert(balance, pot.currency, main, rates),
   }
+}
+
+export interface SavingsOverview {
+  pots: PotState[]
+  /** every pot's balance in the main currency; pots without a rate are left out */
+  total: number
+  totalOpening: number
+  totalAdded: number
+  monthNet: number
+  /** currencies that hold money but have no rate yet */
+  missingRates: string[]
+  /** true once more than one currency is in play */
+  multiCurrency: boolean
+}
+
+export function savingsOverview(
+  pots: SavingsPot[],
+  transactions: Transaction[],
+  entries: SavingsEntry[],
+  main: string,
+  rates: Record<string, number>,
+  month?: MonthKey,
+): SavingsOverview {
+  const live = pots.filter((p) => !p.archived)
+  const states = live.map((p) => potState(p, transactions, entries, main, rates, month))
+
+  let total = 0
+  let totalOpening = 0
+  let totalAdded = 0
+  let monthNet = 0
+  const missing = new Set<string>()
+
+  for (const st of states) {
+    if (st.inMain === null) {
+      if (st.balance !== 0) missing.add(st.pot.currency)
+      continue
+    }
+    total += st.inMain
+    totalOpening += convert(st.opening, st.pot.currency, main, rates) ?? 0
+    totalAdded += convert(st.addedIn, st.pot.currency, main, rates) ?? 0
+    monthNet += convert(st.monthNet, st.pot.currency, main, rates) ?? 0
+  }
+
+  return {
+    pots: states,
+    total,
+    totalOpening,
+    totalAdded,
+    monthNet,
+    missingRates: [...missing],
+    multiCurrency: new Set(live.map((p) => p.currency)).size > 1,
+  }
+}
+
+/** The pot monthly transfers land in — always one in the main currency. */
+export function mainPot(pots: SavingsPot[], main: string): SavingsPot | undefined {
+  return pots.find((p) => p.currency === main && !p.archived) ?? pots.find((p) => !p.archived)
 }
 
 /* ------------------------------- splits ------------------------------ */

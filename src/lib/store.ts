@@ -2,10 +2,20 @@ import { create } from 'zustand'
 import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware'
 import { del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval'
 import { uid } from './id'
-import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS, PERSON_COLORS } from './seed'
-import type { AppData, Category, Person, Settings, Settlement, Transaction } from './types'
+import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS, PERSON_COLORS, POT_COLORS, defaultPot } from './seed'
+import {
+  type AppData,
+  type Category,
+  type Person,
+  type SavingsEntry,
+  type SavingsPot,
+  type Settings,
+  type Settlement,
+  type Transaction,
+} from './types'
 
 const STORE_KEY = 'tally-store-v1'
+export const SCHEMA_VERSION = 2
 
 const idbStorage: StateStorage = {
   getItem: async (name) => (await idbGet<string>(name)) ?? null,
@@ -41,6 +51,17 @@ interface Actions {
   addSettlement: (s: Omit<Settlement, 'id' | 'createdAt'>) => void
   deleteSettlement: (id: string) => void
 
+  addPot: (p: Omit<SavingsPot, 'id'>) => string
+  updatePot: (id: string, patch: Partial<SavingsPot>) => void
+  /** The last pot in the main currency cannot go — transfers need a home. */
+  deletePot: (id: string) => { ok: boolean; reason?: string }
+
+  addSavingsEntry: (e: Omit<SavingsEntry, 'id' | 'createdAt'>) => string
+  updateSavingsEntry: (id: string, patch: Partial<SavingsEntry>) => void
+  deleteSavingsEntry: (id: string) => void
+
+  setRate: (currency: string, rate: number | null) => void
+
   updateSettings: (patch: Partial<Settings>) => void
   replaceAll: (data: AppData) => void
   resetAll: () => void
@@ -49,14 +70,69 @@ interface Actions {
 export type Store = AppData & Actions
 
 const emptyData = (): AppData => ({
+  version: SCHEMA_VERSION,
   transactions: [],
   categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
   people: [],
   settlements: [],
+  savingsPots: [defaultPot(DEFAULT_SETTINGS.currency)],
+  savingsEntries: [],
   budgets: {},
   budgetOverrides: {},
   settings: { ...DEFAULT_SETTINGS },
 })
+
+/**
+ * Anything an older version might have written: every field optional, and
+ * settings loose enough to still carry v1's single openingSavings figure.
+ */
+export type LegacyData = Omit<Partial<AppData>, 'settings'> & {
+  settings?: Partial<Settings> & { openingSavings?: number }
+}
+
+/**
+ * Brings any older shape forward. Used both when rehydrating this device and
+ * when importing a backup written by an earlier version, so there is one
+ * upgrade path rather than two that can drift.
+ */
+export function migrate(raw: LegacyData): AppData {
+  const base = emptyData()
+  const settings = { ...base.settings, ...(raw.settings ?? {}) }
+  const currency = settings.currency
+  settings.rates = settings.rates ?? {}
+
+  let pots = raw.savingsPots?.length ? raw.savingsPots : []
+  if (!pots.length) {
+    // v1 kept a single opening figure on settings; it becomes the main pot.
+    pots = [defaultPot(currency, raw.settings?.openingSavings ?? 0)]
+  }
+  // guarantee a landing place for monthly transfers
+  if (!pots.some((p) => p.currency === currency && !p.archived)) {
+    pots = [defaultPot(currency), ...pots]
+  }
+
+  delete (settings as { openingSavings?: number }).openingSavings
+
+  const mainPot = pots.find((p) => p.currency === currency && !p.archived) ?? pots[0]
+
+  return {
+    version: SCHEMA_VERSION,
+    transactions: (raw.transactions ?? []).map((t) =>
+      // v1 transactions knew nothing about pots
+      t.kind === 'expense' && (t.isSaving || t.account === 'savings') && !t.savingsPotId
+        ? { ...t, savingsPotId: mainPot.id }
+        : t,
+    ),
+    categories: raw.categories?.length ? raw.categories : base.categories,
+    people: raw.people ?? [],
+    settlements: raw.settlements ?? [],
+    savingsPots: pots,
+    savingsEntries: raw.savingsEntries ?? [],
+    budgets: raw.budgets ?? {},
+    budgetOverrides: raw.budgetOverrides ?? {},
+    settings,
+  }
+}
 
 export const useStore = create<Store>()(
   persist(
@@ -184,34 +260,103 @@ export const useStore = create<Store>()(
       deleteSettlement: (id) =>
         set((s) => ({ settlements: s.settlements.filter((x) => x.id !== id) })),
 
+      addPot: (pot) => {
+        const id = uid()
+        set((s) => ({
+          savingsPots: [
+            ...s.savingsPots,
+            { ...pot, id, color: pot.color || POT_COLORS[s.savingsPots.length % POT_COLORS.length] },
+          ],
+        }))
+        return id
+      },
+
+      updatePot: (id, patch) =>
+        set((s) => ({
+          savingsPots: s.savingsPots.map((p) => (p.id === id ? { ...p, ...patch, id: p.id } : p)),
+        })),
+
+      deletePot: (id) => {
+        const s = get()
+        const pot = s.savingsPots.find((p) => p.id === id)
+        if (!pot) return { ok: false, reason: 'Pot not found.' }
+
+        const lastInMainCurrency =
+          pot.currency === s.settings.currency &&
+          s.savingsPots.filter((p) => p.currency === s.settings.currency && !p.archived).length === 1
+        if (lastInMainCurrency) {
+          return {
+            ok: false,
+            reason: 'This is the only pot in your main currency, and monthly transfers need somewhere to land. Rename it instead.',
+          }
+        }
+
+        const usedByTx = s.transactions.filter((t) => t.savingsPotId === id).length
+        if (usedByTx) {
+          return {
+            ok: false,
+            reason: `${usedByTx} ${usedByTx === 1 ? 'entry moves' : 'entries move'} money through this pot. Rename it instead, or remove those entries first.`,
+          }
+        }
+
+        set({
+          savingsPots: s.savingsPots.filter((p) => p.id !== id),
+          savingsEntries: s.savingsEntries.filter((e) => e.potId !== id),
+        })
+        return { ok: true }
+      },
+
+      addSavingsEntry: (entry) => {
+        const id = uid()
+        set((s) => ({
+          savingsEntries: [...s.savingsEntries, { ...entry, id, createdAt: Date.now() }],
+        }))
+        return id
+      },
+
+      updateSavingsEntry: (id, patch) =>
+        set((s) => ({
+          savingsEntries: s.savingsEntries.map((e) =>
+            e.id === id ? { ...e, ...patch, id: e.id } : e,
+          ),
+        })),
+
+      deleteSavingsEntry: (id) =>
+        set((s) => ({ savingsEntries: s.savingsEntries.filter((e) => e.id !== id) })),
+
+      setRate: (currency, rate) =>
+        set((s) => {
+          const rates = { ...s.settings.rates }
+          if (rate === null || !Number.isFinite(rate) || rate <= 0) delete rates[currency]
+          else rates[currency] = rate
+          return { settings: { ...s.settings, rates } }
+        }),
+
       updateSettings: (patch) => set((s) => ({ settings: { ...s.settings, ...patch } })),
 
-      replaceAll: (data) =>
-        set({
-          transactions: data.transactions ?? [],
-          categories: data.categories?.length ? data.categories : DEFAULT_CATEGORIES,
-          people: data.people ?? [],
-          settlements: data.settlements ?? [],
-          budgets: data.budgets ?? {},
-          budgetOverrides: data.budgetOverrides ?? {},
-          settings: { ...DEFAULT_SETTINGS, ...(data.settings ?? {}) },
-        }),
+      // a backup may have been written by an older version, so it takes the
+      // same upgrade path as locally stored data
+      replaceAll: (data) => set(migrate(data as LegacyData)),
 
       resetAll: () => set({ ...emptyData(), settings: { ...DEFAULT_SETTINGS, onboarded: true } }),
     }),
     {
       name: STORE_KEY,
-      version: 1,
+      version: SCHEMA_VERSION,
       storage: createJSONStorage(() => idbStorage),
       partialize: (s) => ({
+        version: s.version,
         transactions: s.transactions,
         categories: s.categories,
         people: s.people,
         settlements: s.settlements,
+        savingsPots: s.savingsPots,
+        savingsEntries: s.savingsEntries,
         budgets: s.budgets,
         budgetOverrides: s.budgetOverrides,
         settings: s.settings,
       }),
+      migrate: (persisted) => migrate((persisted ?? {}) as LegacyData),
       onRehydrateStorage: () => (_state, error) => {
         if (error) console.error('Could not read saved data', error)
         useStore.setState({ hydrated: true })
@@ -224,10 +369,13 @@ export const useStore = create<Store>()(
 export function exportData(): AppData {
   const s = useStore.getState()
   return {
+    version: SCHEMA_VERSION,
     transactions: s.transactions,
     categories: s.categories,
     people: s.people,
     settlements: s.settlements,
+    savingsPots: s.savingsPots,
+    savingsEntries: s.savingsEntries,
     budgets: s.budgets,
     budgetOverrides: s.budgetOverrides,
     settings: s.settings,

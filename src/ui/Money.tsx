@@ -25,6 +25,8 @@ export interface MoneyProps {
   className?: string
   /** smaller, dimmer decimals — the default; off for dense tables */
   splitCents?: boolean
+  /** override the app currency — savings pots hold their own */
+  currency?: string
 }
 
 function toneClass(tone: Tone, value: number) {
@@ -42,9 +44,10 @@ export function Money({
   compactCents = false,
   splitCents = true,
   className,
+  currency,
 }: MoneyProps) {
-  const currency = useStore((s) => s.settings.currency)
-  const { sign, symbol, whole, cents } = moneyParts(value, currency)
+  const main = useStore((s) => s.settings.currency)
+  const { sign, symbol, whole, cents } = moneyParts(value, currency ?? main)
   const lead = sign === '-' ? '-' : signed && value > 0 ? '+' : ''
   const hideCents = compactCents && cents === '00'
 
@@ -75,8 +78,10 @@ export function AnimatedMoney({
   signed = false,
   compactCents = false,
   className,
+  currency,
 }: AnimatedMoneyProps) {
-  const currency = useStore((s) => s.settings.currency)
+  const main = useStore((s) => s.settings.currency)
+  const code = currency ?? main
   const mv = useSpring(value, { stiffness: 140, damping: 24, mass: 0.7 })
 
   useEffect(() => {
@@ -93,7 +98,7 @@ export function AnimatedMoney({
   return (
     <span className={cx('tnum whitespace-nowrap', toneClass(tone, value), className)}>
       <motion.span>{lead}</motion.span>
-      <span className="opacity-60">{symbolFor(currency)}</span>
+      <span className="opacity-60">{symbolFor(code)}</span>
       <motion.span>{whole}</motion.span>
       {showCents && (
         <span className="text-[0.72em] opacity-55">

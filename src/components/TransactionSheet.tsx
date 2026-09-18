@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { CalendarDays, PiggyBank, Trash2, Users } from 'lucide-react'
+import { CalendarDays, CopyPlus, PiggyBank, Trash2, Users } from 'lucide-react'
 import { splitEvenly, symbolFor, toMinor } from '../lib/money'
+import { mainPot } from '../lib/selectors'
 import { todayISO } from '../lib/date'
 import { useStore } from '../lib/store'
 import { ME, type Split, type Transaction, type TxKind } from '../lib/types'
@@ -41,6 +42,7 @@ export function TransactionSheet({
   const categories = useStore((s) => s.categories)
   const transactions = useStore((s) => s.transactions)
   const people = useStore((s) => s.people)
+  const pots = useStore((s) => s.savingsPots)
   const currency = useStore((s) => s.settings.currency)
   const addTransaction = useStore((s) => s.addTransaction)
   const updateTransaction = useStore((s) => s.updateTransaction)
@@ -53,6 +55,7 @@ export function TransactionSheet({
   const [date, setDate] = useState(todayISO())
   const [fromSavings, setFromSavings] = useState(false)
   const [split, setSplit] = useState<Split | null>(null)
+  const [potId, setPotId] = useState<string>('')
   const [pickingCategory, setPickingCategory] = useState(false)
   const [editingSplit, setEditingSplit] = useState(false)
   const [bump, setBump] = useState(0)
@@ -64,6 +67,18 @@ export function TransactionSheet({
   )
   const category = ofKind.find((c) => c.id === categoryId) ?? ofKind[0]
   const isSavingsCategory = category?.system === 'savings'
+
+  /**
+   * The ledger is single-currency, so a transaction can only move money
+   * through a pot that holds the main currency. Foreign pots are managed on
+   * the savings screen, where amounts are in the pot's own currency.
+   */
+  const eligiblePots = useMemo(
+    () => pots.filter((p) => p.currency === currency && !p.archived),
+    [pots, currency],
+  )
+  const touchesSavings = kind === 'expense' && (isSavingsCategory || fromSavings)
+  const pot = eligiblePots.find((p) => p.id === potId) ?? mainPot(pots, currency)
 
   /** Most recently used category for this kind, so repeat entries are one tap. */
   const lastUsed = useMemo(() => {
@@ -84,6 +99,7 @@ export function TransactionSheet({
       setDate(editing.date)
       setFromSavings(editing.account === 'savings')
       setSplit(editing.split ?? null)
+      setPotId(editing.savingsPotId ?? '')
     } else {
       setKind(defaultKind)
       setRaw('')
@@ -92,6 +108,7 @@ export function TransactionSheet({
       setDate(defaultDate ?? todayISO())
       setFromSavings(preset?.fromSavings ?? false)
       setSplit(null)
+      setPotId('')
     }
   }, [open, editing, defaultKind, defaultDate, preset])
 
@@ -147,6 +164,7 @@ export function TransactionSheet({
         ? {
             account: fromSavings ? ('savings' as const) : ('main' as const),
             isSaving: isSavingsCategory || undefined,
+            savingsPotId: touchesSavings ? pot?.id : undefined,
             split: split ?? undefined,
           }
         : {}),
@@ -157,6 +175,7 @@ export function TransactionSheet({
         ...payload,
         account: kind === 'expense' ? payload.account : undefined,
         isSaving: kind === 'expense' ? payload.isSaving : undefined,
+        savingsPotId: kind === 'expense' ? payload.savingsPotId : undefined,
         split: kind === 'expense' ? payload.split : undefined,
       })
       toast('Entry updated')
@@ -165,6 +184,16 @@ export function TransactionSheet({
       toast(isSavingsCategory ? 'Moved to savings' : kind === 'income' ? 'Income added' : 'Expense added')
     }
     haptic('success')
+    onClose()
+  }
+
+  /** Copy this entry to today, ready to tweak — the monthly-bill shortcut. */
+  function duplicate() {
+    if (!editing) return
+    const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = editing
+    addTransaction({ ...rest, date: todayISO() })
+    haptic('success')
+    toast('Copied to today')
     onClose()
   }
 
@@ -217,9 +246,18 @@ export function TransactionSheet({
         }
         action={
           editing ? (
-            <button onClick={remove} aria-label="Delete entry" className="mr-1 p-1 text-neg">
-              <Trash2 size={17} strokeWidth={2.1} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={duplicate}
+                aria-label="Repeat this entry today"
+                className="p-1.5 text-dim"
+              >
+                <CopyPlus size={17} strokeWidth={2.1} />
+              </button>
+              <button onClick={remove} aria-label="Delete entry" className="p-1.5 text-neg">
+                <Trash2 size={17} strokeWidth={2.1} />
+              </button>
+            </div>
           ) : undefined
         }
       >
@@ -365,6 +403,44 @@ export function TransactionSheet({
                 From savings
               </motion.button>
             </div>
+          )}
+
+          {touchesSavings && eligiblePots.length > 1 && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5"
+            >
+              {eligiblePots.map((p) => {
+                const active = p.id === pot?.id
+                return (
+                  <motion.button
+                    key={p.id}
+                    whileTap={tap}
+                    onClick={() => {
+                      haptic('select')
+                      setPotId(p.id)
+                    }}
+                    className={cx(
+                      'flex h-10 shrink-0 items-center gap-2 rounded-full px-3.5 text-[12.5px] font-medium transition-colors',
+                      active ? 'text-text' : 'bg-surface-2/60 text-dim ring-1 ring-line/40',
+                    )}
+                    style={
+                      active
+                        ? { backgroundColor: p.color + '22', boxShadow: 'inset 0 0 0 1px ' + p.color + '55' }
+                        : undefined
+                    }
+                  >
+                    <span
+                      className="size-2 rounded-full"
+                      style={{ backgroundColor: active ? p.color : 'var(--text-faint)' }}
+                    />
+                    {isSavingsCategory ? 'into ' : 'from '}
+                    {p.name}
+                  </motion.button>
+                )
+              })}
+            </motion.div>
           )}
 
           {isSavingsCategory && (
