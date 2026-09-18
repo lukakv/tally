@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { Inbox, Search, X } from 'lucide-react'
-import { activeMonths, cashFlow, monthSummary, myShare } from '../lib/selectors'
+import { activeMonths, cashFlow, myShare } from '../lib/selectors'
 import { currentMonthKey, dayLabel, monthKeyOf, monthLabel } from '../lib/date'
 import { useStore } from '../lib/store'
 import { confirm, toast } from '../ui/feedback'
@@ -40,7 +40,6 @@ export function Activity() {
     () => activeMonths(transactions, currentMonthKey()),
     [transactions],
   )
-  const summary = useMemo(() => monthSummary(transactions, month), [transactions, month])
 
   const inMonth = useMemo(
     () => transactions.filter((t) => monthKeyOf(t.date) === month),
@@ -109,7 +108,6 @@ export function Activity() {
     <Screen>
       <ScreenTitle
         title="Activity"
-        sub={`${summary.expenseCount + summary.incomeCount} entries this month`}
         right={
           <button
             onClick={() => {

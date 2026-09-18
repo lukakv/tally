@@ -30,14 +30,6 @@ import { Screen, ScreenTitle } from '../components/Screen'
 import { SplitBar } from '../components/SplitBar'
 import { TransactionRow } from '../components/TransactionRow'
 
-function greeting(): string {
-  const h = new Date().getHours()
-  if (h < 5) return 'Still up'
-  if (h < 12) return 'Good morning'
-  if (h < 18) return 'Good afternoon'
-  return 'Good evening'
-}
-
 export function Home() {
   const transactions = useStore((s) => s.transactions)
   const categories = useStore((s) => s.categories)
@@ -109,8 +101,7 @@ export function Home() {
   return (
     <Screen>
       <ScreenTitle
-        title={greeting()}
-        sub={`${monthLabel(month)} · ${summary.expenseCount + summary.incomeCount} entries`}
+        title={monthLabel(month)}
         right={
           <Pressable
             onClick={() => setSettingsOpen(true)}

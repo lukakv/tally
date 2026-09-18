@@ -3,6 +3,7 @@ import { motion } from 'motion/react'
 import {
   Coins,
   Download,
+  Info,
   Sheet as SheetIcon,
   HardDriveDownload,
   RotateCcw,
@@ -40,6 +41,7 @@ export function SettingsSheet() {
   const [managing, setManaging] = useState(false)
   const [currencyOpen, setCurrencyOpen] = useState(false)
   const [persisted, setPersisted] = useState<boolean | null>(null)
+  const [checking, setChecking] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -126,6 +128,36 @@ export function SettingsSheet() {
         : 'The browser declined — install the app to home screen and try again',
       { tone: granted ? 'ok' : 'warn', duration: 5000 },
     )
+  }
+
+  /**
+   * New versions install themselves in the background and take over on the
+   * next launch, which is fine but invisible. This makes it something you can
+   * ask for and get an answer to.
+   */
+  async function checkForUpdate() {
+    setChecking(true)
+    try {
+      const reg = await navigator.serviceWorker?.getRegistration()
+      if (!reg) {
+        toast('Updates arrive when the app is installed to your home screen', {
+          tone: 'info',
+          duration: 5000,
+        })
+        return
+      }
+      await reg.update()
+      if (reg.installing || reg.waiting) {
+        toast('New version found — reopening', { tone: 'ok' })
+        setTimeout(() => window.location.reload(), 900)
+      } else {
+        toast('You are on the latest version')
+      }
+    } catch {
+      toast('Could not check just now', { tone: 'warn' })
+    } finally {
+      setChecking(false)
+    }
   }
 
   const currency = CURRENCIES.find((c) => c.code === settings.currency)
@@ -243,8 +275,18 @@ export function SettingsSheet() {
             }}
           />
 
+          <Group title="About">
+            <Row
+              icon={<IconBox><Info size={17} strokeWidth={2.1} /></IconBox>}
+              label={`Version ${__APP_VERSION__}`}
+              sub={checking ? 'Checking…' : `Built ${__BUILD_DATE__} · tap to check for updates`}
+              chevron
+              onClick={checkForUpdate}
+            />
+          </Group>
+
           <p className="px-2 text-center text-[12px] leading-relaxed text-faint">
-            Tally · private, offline, yours
+            Private, offline, yours
           </p>
         </div>
       </Sheet>

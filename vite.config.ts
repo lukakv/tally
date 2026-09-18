@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -6,8 +7,17 @@ import { VitePWA } from 'vite-plugin-pwa'
 // VITE_BASE lets us deploy under a subpath (e.g. GitHub Pages) without code changes.
 const base = process.env.VITE_BASE ?? '/'
 
+// Baked in at build time so a running copy can say exactly what it is —
+// otherwise "am I on the latest?" is unanswerable from the phone.
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
+const buildInfo = {
+  __APP_VERSION__: JSON.stringify(pkg.version),
+  __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
+}
+
 export default defineConfig({
   base,
+  define: buildInfo,
   plugins: [
     react(),
     tailwindcss(),

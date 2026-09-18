@@ -1,9 +1,10 @@
-import { useEffect, type ReactNode } from 'react'
+import { useEffect, useRef, type ReactNode } from 'react'
 import { AnimatePresence, motion, type PanInfo } from 'motion/react'
 import { X } from 'lucide-react'
 import { haptic } from './haptics'
 import { springSoft, tap } from './motion'
 import { cx } from './cx'
+import { popSheet, pushSheet } from './sheetStack'
 
 export interface SheetProps {
   open: boolean
@@ -19,10 +20,6 @@ export interface SheetProps {
   /** off when the content manages its own scrolling, e.g. a pinned keypad */
   scroll?: boolean
 }
-
-let sheetSeq = 0
-/** popstate events this component caused itself, waiting to be swallowed */
-let selfNavigations = 0
 
 const DISMISS_DISTANCE = 110
 const DISMISS_VELOCITY = 520
@@ -47,47 +44,38 @@ export function Sheet({
     }
   }, [open])
 
-  // Android's back gesture should close the sheet, not leave the app, so each
-  // open sheet owns one history entry.
-  //
-  // history.back() resolves asynchronously, so the popstate it triggers can
-  // land after this effect has already been torn down and re-run — under
-  // StrictMode that reliably closed the sheet the instant it opened. The
-  // module-level counter lets whichever listener is alive at that moment know
-  // the event was ours and swallow it.
+  /**
+   * onClose is almost always an inline arrow, so it is a different function on
+   * every render of whatever owns the sheet. Listing it as a dependency below
+   * made the history effect tear down and rebuild constantly — and since that
+   * teardown calls history.back(), and a history navigation dismisses the
+   * on-screen keyboard on Android, typing became impossible and the back
+   * guard drifted until real back presses stopped closing anything.
+   *
+   * Holding it in a ref keeps the handler current while the effect below
+   * depends only on whether the sheet is open.
+   */
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  // Android's back gesture should close the sheet rather than leave the app.
+  // The stack decides which sheet that is, so nested sheets close one at a
+  // time and in the right order.
   useEffect(() => {
     if (!open) return
-    const id = ++sheetSeq
-    history.pushState({ tallySheet: id }, '')
-
-    const onPop = () => {
-      if (selfNavigations > 0) {
-        selfNavigations--
-        return
-      }
-      onClose()
-    }
-    window.addEventListener('popstate', onPop)
-
-    return () => {
-      window.removeEventListener('popstate', onPop)
-      // only unwind the entry we actually pushed
-      if (history.state?.tallySheet === id) {
-        selfNavigations++
-        history.back()
-      }
-    }
-  }, [open, onClose])
+    const id = pushSheet(() => onCloseRef.current())
+    return () => popSheet(id)
+  }, [open])
 
   // Hardware back / Escape closes the top sheet instead of leaving the app.
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape') onCloseRef.current()
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
+  }, [open])
 
   function handleDragEnd(_: unknown, info: PanInfo) {
     if (info.offset.y > DISMISS_DISTANCE || info.velocity.y > DISMISS_VELOCITY) {

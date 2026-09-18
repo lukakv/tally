@@ -43,7 +43,6 @@ export function Split() {
     <Screen>
       <ScreenTitle
         title="Shared"
-        sub="Who owes what, at a glance"
         right={
           <motion.button
             whileTap={tap}

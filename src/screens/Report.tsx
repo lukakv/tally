@@ -105,7 +105,7 @@ export function Report() {
 
   return (
     <Screen>
-      <ScreenTitle title="Report" sub="Where the month went" />
+      <ScreenTitle title="Report" />
 
       <div className="mb-3">
         <MonthNav month={month} onChange={setMonth} months={months} />
