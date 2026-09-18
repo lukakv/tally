@@ -49,3 +49,11 @@ export function monthProgress(key: MonthKey): number {
   const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
   return now.getDate() / days
 }
+
+/** Days remaining including today; a past month has none left to plan for. */
+export function daysLeftInMonth(key: MonthKey): number {
+  const now = new Date()
+  if (key !== format(now, 'yyyy-MM')) return 0
+  const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
+  return days - now.getDate() + 1
+}

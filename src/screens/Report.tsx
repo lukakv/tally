@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
 import { ChartPie, ChevronDown, Plus, Target } from 'lucide-react'
 import { activeMonths, budgetRows, budgetTotals, categoryTotals, monthSummary } from '../lib/selectors'
-import { currentMonthKey, monthLabel, monthProgress } from '../lib/date'
+import { currentMonthKey, daysLeftInMonth, monthLabel, monthProgress } from '../lib/date'
 import { monthKeyOf } from '../lib/date'
 import { formatMoney, symbolFor } from '../lib/money'
 import { useStore } from '../lib/store'
@@ -24,7 +24,7 @@ import { BudgetSheet } from '../components/BudgetSheet'
 type Mode = 'spending' | 'budget' | 'income'
 
 /** Name column flexes; the three figures get fixed, equal columns. */
-const ROW_GRID = 'grid grid-cols-[minmax(0,1fr)_58px_58px_62px] items-center gap-2'
+const ROW_GRID = 'grid grid-cols-[minmax(0,1fr)_64px_68px] items-center gap-2'
 
 /** Table figures drop the currency symbol — it is stated once in the header. */
 function Cell({
@@ -99,6 +99,9 @@ export function Report() {
   const breakdown = rows.filter((r) => !(mode === 'spending' && r.category.system === 'savings'))
   const headline = mode === 'income' ? summary.income : summary.spent
   const pace = monthProgress(month)
+  const daysLeft = daysLeftInMonth(month)
+  /** What is left, spread evenly over the days still to come. */
+  const perDay = daysLeft > 0 && totals.diff > 0 ? Math.floor(totals.diff / daysLeft) : null
 
   return (
     <Screen>
@@ -166,18 +169,27 @@ export function Report() {
                   </span>
                   {totals.overCount > 0 && (
                     <span className="text-neg">
-                      {totals.overCount} over{' '}
-                      {totals.overCount === 1 ? 'category' : 'categories'}
+                      {totals.overCount} {totals.overCount === 1 ? 'category' : 'categories'} over
                     </span>
                   )}
                 </div>
                 {month === currentMonthKey() && (
-                  <p className="mt-2 text-[12px] text-faint">
+                  <p className="mt-2 text-[12px] leading-relaxed text-faint">
                     {totals.progress > pace + 0.06
                       ? 'Spending faster than the month is passing.'
                       : totals.progress < pace - 0.06
                         ? 'Running comfortably ahead of pace.'
                         : 'Right on pace for the month.'}
+                    {perDay !== null && (
+                      <>
+                        {' '}
+                        About{' '}
+                        <span className="font-medium text-dim">
+                          {formatMoney(perDay, currency, { decimals: 'none' })}
+                        </span>{' '}
+                        a day for the {daysLeft === 1 ? 'last day' : `${daysLeft} days left`}.
+                      </>
+                    )}
                   </p>
                 )}
               </Card>
@@ -197,9 +209,8 @@ export function Report() {
                 <Card className="divide-y divide-line-soft overflow-hidden">
                   <div className={cx(ROW_GRID, 'bg-surface-2/40 px-4 py-2 text-[10.5px] font-semibold tracking-[0.05em] text-faint uppercase')}>
                     <span>Category</span>
-                    <span className="text-right">Planned</span>
-                    <span className="text-right">Actual</span>
-                    <span className="text-right">Diff</span>
+                    <span className="text-right">Spent</span>
+                    <span className="text-right">Left</span>
                   </div>
                   {budgetList.map((r) => (
                     <button
@@ -222,13 +233,6 @@ export function Report() {
                           </span>
                         </div>
                         <span className="text-right">
-                          {r.hasBudget ? (
-                            <Cell value={r.budget} tone="dim" />
-                          ) : (
-                            <span className="text-[13px] text-faint">—</span>
-                          )}
-                        </span>
-                        <span className="text-right">
                           <Cell value={r.spent} tone="plain" bold />
                         </span>
                         <span className="text-right">
@@ -240,8 +244,11 @@ export function Report() {
                         </span>
                       </div>
                       {r.hasBudget && (
-                        <div className="mt-2 pl-[40px]">
+                        <div className="mt-2 flex items-center gap-2 pl-[40px]">
                           <Bar progress={r.progress} color={r.category.color} height={4} />
+                          <span className="tnum shrink-0 text-[11px] text-faint">
+                            of {formatMoney(r.budget, currency, { decimals: 'auto', showSymbol: false })}
+                          </span>
                         </div>
                       )}
                     </button>

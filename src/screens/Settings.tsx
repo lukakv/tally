@@ -3,6 +3,7 @@ import { motion } from 'motion/react'
 import {
   Coins,
   Download,
+  Sheet as SheetIcon,
   HardDriveDownload,
   RotateCcw,
   ShieldCheck,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react'
 import { CURRENCIES } from '../lib/seed'
 import { exportData, useStore } from '../lib/store'
+import { savingsEntriesToCSV, transactionsToCSV } from '../lib/csv'
 import { useUI } from '../lib/ui'
 import type { AppData, Category, TxKind } from '../lib/types'
 import { Sheet } from '../ui/Sheet'
@@ -45,20 +47,38 @@ export function SettingsSheet() {
     navigator.storage?.persisted?.().then(setPersisted).catch(() => setPersisted(null))
   }, [open])
 
-  function doExport() {
-    const data = exportData()
-    const stamp = new Date().toISOString().slice(0, 10)
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  function download(filename: string, contents: string, type: string) {
+    const blob = new Blob([contents], { type })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `tally-backup-${stamp}.json`
+    a.download = filename
     document.body.appendChild(a)
     a.click()
     a.remove()
     setTimeout(() => URL.revokeObjectURL(url), 2000)
+  }
+
+  const stamp = () => new Date().toISOString().slice(0, 10)
+
+  function doExport() {
+    download(`tally-backup-${stamp()}.json`, JSON.stringify(exportData(), null, 2), 'application/json')
     haptic('success')
     toast('Backup saved')
+  }
+
+  function doExportCsv() {
+    const data = exportData()
+    download(`tally-entries-${stamp()}.csv`, transactionsToCSV(data), 'text/csv;charset=utf-8')
+    if (data.savingsEntries.length) {
+      download(
+        `tally-savings-${stamp()}.csv`,
+        savingsEntriesToCSV(data),
+        'text/csv;charset=utf-8',
+      )
+    }
+    haptic('success')
+    toast('Spreadsheet saved')
   }
 
   async function doImport(file: File) {
@@ -159,7 +179,7 @@ export function SettingsSheet() {
 
           <Group
             title="Your data"
-            footnote="Everything lives on this device only. Nothing is uploaded, and there is no account. Keep a backup somewhere safe."
+            footnote="Everything lives on this device only. Nothing is uploaded, and there is no account. The JSON backup is the one that restores; the spreadsheet is for reading elsewhere."
           >
             <Row
               icon={<IconBox><Download size={17} strokeWidth={2.1} /></IconBox>}
@@ -167,6 +187,13 @@ export function SettingsSheet() {
               sub={`${transactions.length} entries as a JSON file`}
               chevron
               onClick={doExport}
+            />
+            <Row
+              icon={<IconBox><SheetIcon size={17} strokeWidth={2.1} /></IconBox>}
+              label="Export a spreadsheet"
+              sub="CSV, for opening in Excel or Sheets"
+              chevron
+              onClick={doExportCsv}
             />
             <Row
               icon={<IconBox><Upload size={17} strokeWidth={2.1} /></IconBox>}

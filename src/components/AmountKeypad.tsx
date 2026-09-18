@@ -53,8 +53,8 @@ export function AmountKeypad({
           }}
           aria-label={k === 'del' ? 'Delete' : k}
           className={cx(
-            'grid h-[52px] place-items-center rounded-2xl bg-surface-2/60',
-            'text-[22px] font-medium tabular-nums select-none',
+            'grid h-[clamp(44px,6.6dvh,52px)] place-items-center rounded-2xl bg-surface-2/60',
+            'text-[clamp(19px,2.9dvh,22px)] font-medium tabular-nums select-none',
           )}
         >
           {k === 'del' ? <Delete size={20} strokeWidth={2} className="text-dim" /> : k}

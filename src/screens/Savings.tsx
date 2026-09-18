@@ -15,11 +15,10 @@ import { currentMonthKey, monthLabel, shortDate } from '../lib/date'
 import { symbolFor } from '../lib/money'
 import { useStore } from '../lib/store'
 import { useUI } from '../lib/ui'
-import type { SavingsPot } from '../lib/types'
+import type { SavingsEntry, SavingsPot } from '../lib/types'
 import { Sheet } from '../ui/Sheet'
 import { AnimatedMoney, Money } from '../ui/Money'
 import { Button, Card, EmptyState, SectionLabel } from '../ui/primitives'
-import { confirm, toast } from '../ui/feedback'
 import { haptic } from '../ui/haptics'
 import { riseItem, stagger, springSoft, tap } from '../ui/motion'
 import { cx } from '../ui/cx'
@@ -49,13 +48,12 @@ export function SavingsSheet() {
   const entries = useStore((s) => s.savingsEntries)
   const main = useStore((s) => s.settings.currency)
   const rates = useStore((s) => s.settings.rates)
-  const deleteSavingsEntry = useStore((s) => s.deleteSavingsEntry)
-  const addSavingsEntry = useStore((s) => s.addSavingsEntry)
 
   const [movement, setMovement] = useState<MovementMode | null>(null)
   const [movementPot, setMovementPot] = useState<string | undefined>()
   const [editingPot, setEditingPot] = useState<SavingsPot | 'new' | null>(null)
   const [ratesOpen, setRatesOpen] = useState(false)
+  const [editingEntry, setEditingEntry] = useState<SavingsEntry | null>(null)
 
   const month = currentMonthKey()
   const overview = useMemo(
@@ -113,31 +111,18 @@ export function SavingsSheet() {
     setMovement(mode)
   }
 
-  async function removeMovement(m: Movement) {
-    if (m.kind !== 'entry') {
-      setOpen(false)
-      const tx = transactions.find((t) => t.id === m.txId)
-      if (tx) openEntry({ tx })
+  /** A tap opens the thing, the same as every other list in the app. */
+  function openMovement(m: Movement) {
+    if (m.kind === 'entry') {
+      const found = entries.find((e) => e.id === m.id)
+      if (found) setEditingEntry(found)
       return
     }
-    const ok = await confirm({
-      title: 'Remove this movement?',
-      body: 'The pot balance goes back to what it was.',
-      confirmLabel: 'Remove',
-      danger: true,
-    })
-    if (!ok) return
-    const snapshot = entries.find((e) => e.id === m.id)
-    deleteSavingsEntry(m.id)
-    haptic('success')
-    toast('Movement removed', {
-      undo: snapshot
-        ? () => {
-            const { id: _id, createdAt: _c, ...rest } = snapshot
-            addSavingsEntry(rest)
-          }
-        : undefined,
-    })
+    // transfers and savings-funded spending live in the ledger, so they are
+    // edited where they were created
+    setOpen(false)
+    const tx = transactions.find((t) => t.id === m.txId)
+    if (tx) openEntry({ tx })
   }
 
   return (
@@ -377,7 +362,7 @@ export function SavingsSheet() {
                       layout="position"
                       transition={springSoft}
                       whileTap={{ backgroundColor: 'var(--surface-2)' }}
-                      onClick={() => removeMovement(m)}
+                      onClick={() => openMovement(m)}
                       className="flex w-full items-center gap-3 px-4 py-3 text-left"
                     >
                       <span
@@ -425,6 +410,12 @@ export function SavingsSheet() {
         onClose={() => setMovement(null)}
         mode={movement ?? 'add'}
         potId={movementPot}
+      />
+      <SavingsMovementSheet
+        open={editingEntry !== null}
+        onClose={() => setEditingEntry(null)}
+        mode={(editingEntry?.amount ?? 0) < 0 ? 'take' : 'add'}
+        editing={editingEntry}
       />
       <PotSheet
         open={editingPot !== null}

@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'motion/react'
-import { ArrowDownLeft, ArrowUpRight, Check, Info } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, Check, Info, Trash2 } from 'lucide-react'
 import { symbolFor, toMinor } from '../lib/money'
 import { todayISO } from '../lib/date'
 import { mainPot } from '../lib/selectors'
 import { SAVINGS_CATEGORY_ID } from '../lib/seed'
 import { useStore } from '../lib/store'
-import type { SavingsPot } from '../lib/types'
+import type { SavingsEntry, SavingsPot } from '../lib/types'
 import { Sheet } from '../ui/Sheet'
 import { Button } from '../ui/primitives'
 import { Money } from '../ui/Money'
-import { toast } from '../ui/feedback'
+import { confirm, toast } from '../ui/feedback'
 import { haptic } from '../ui/haptics'
 import { spring, springSoft, tap } from '../ui/motion'
 import { cx } from '../ui/cx'
@@ -34,16 +34,21 @@ export function SavingsMovementSheet({
   onClose,
   mode,
   potId,
+  editing,
 }: {
   open: boolean
   onClose: () => void
   mode: MovementMode
   /** pre-selected pot; falls back to the main-currency one */
   potId?: string
+  /** an existing movement to change rather than a new one */
+  editing?: SavingsEntry | null
 }) {
   const pots = useStore((s) => s.savingsPots)
   const main = useStore((s) => s.settings.currency)
   const addSavingsEntry = useStore((s) => s.addSavingsEntry)
+  const updateSavingsEntry = useStore((s) => s.updateSavingsEntry)
+  const deleteSavingsEntry = useStore((s) => s.deleteSavingsEntry)
   const addTransaction = useStore((s) => s.addTransaction)
 
   const live = useMemo(() => pots.filter((p) => !p.archived), [pots])
@@ -63,12 +68,21 @@ export function SavingsMovementSheet({
 
   useEffect(() => {
     if (!open) return
+    if (editing) {
+      const abs = Math.abs(editing.amount)
+      setSelected(editing.potId)
+      setRaw((abs / 100).toFixed(abs % 100 === 0 ? 0 : 2))
+      setDate(editing.date)
+      setNote(editing.note ?? '')
+      setSource('existing')
+      return
+    }
     setSelected(potId ?? fallback?.id ?? '')
     setRaw('')
     setDate(todayISO())
     setNote('')
     setSource('existing')
-  }, [open, potId, fallback?.id])
+  }, [open, potId, fallback?.id, editing])
 
   // Only money in the main currency can come out of this month's budget —
   // the transaction ledger has no concept of any other currency.
@@ -78,6 +92,19 @@ export function SavingsMovementSheet({
 
   function save() {
     if (!pot || amount <= 0) return
+
+    if (editing) {
+      // the pot and the direction are fixed once recorded; only the figures move
+      updateSavingsEntry(editing.id, {
+        amount: editing.amount < 0 ? -amount : amount,
+        date,
+        note: note.trim() || undefined,
+      })
+      haptic('success')
+      toast('Movement updated')
+      onClose()
+      return
+    }
 
     if (mode === 'add' && source === 'month') {
       addTransaction({
@@ -105,16 +132,39 @@ export function SavingsMovementSheet({
     onClose()
   }
 
+  async function remove() {
+    if (!editing) return
+    const ok = await confirm({
+      title: 'Remove this movement?',
+      body: 'The pot balance goes back to what it was.',
+      confirmLabel: 'Remove',
+      danger: true,
+    })
+    if (!ok) return
+    const { id: _id, createdAt: _c, ...rest } = editing
+    deleteSavingsEntry(editing.id)
+    haptic('success')
+    onClose()
+    toast('Movement removed', { undo: () => addSavingsEntry(rest) })
+  }
+
   if (!pot) return null
 
   return (
     <Sheet
       open={open}
       onClose={onClose}
-      title={mode === 'add' ? 'Add to savings' : 'Take out of savings'}
+      title={editing ? 'Edit movement' : mode === 'add' ? 'Add to savings' : 'Take out of savings'}
+      action={
+        editing ? (
+          <button onClick={remove} aria-label="Remove movement" className="mr-1 p-1.5 text-neg">
+            <Trash2 size={17} strokeWidth={2.1} />
+          </button>
+        ) : undefined
+      }
     >
       <div className="space-y-5 px-5 pt-1 pb-7">
-        {live.length > 1 && (
+        {live.length > 1 && !editing && (
           <section>
             <h3 className="mb-2.5 px-1 text-[12px] font-semibold tracking-[0.09em] text-faint uppercase">
               Which pot
@@ -171,7 +221,7 @@ export function SavingsMovementSheet({
           </span>
         </div>
 
-        {mode === 'add' && (
+        {mode === 'add' && !editing && (
           <section>
             <h3 className="mb-2.5 px-1 text-[12px] font-semibold tracking-[0.09em] text-faint uppercase">
               Where is it coming from
@@ -226,7 +276,7 @@ export function SavingsMovementSheet({
         </div>
 
         <AnimatePresence>
-          {mode === 'take' && (
+          {mode === 'take' && !editing && (
             <motion.p
               initial={{ opacity: 0, y: -4 }}
               animate={{ opacity: 1, y: 0 }}
@@ -258,7 +308,9 @@ export function SavingsMovementSheet({
           }
           onClick={save}
         >
-          {amount > 0 ? (
+          {editing ? (
+            <span>Save changes</span>
+          ) : amount > 0 ? (
             <span className="flex items-center gap-1.5">
               {mode === 'add' ? 'Add' : 'Take out'}
               <Money value={amount} currency={pot.currency} className="font-semibold" />

@@ -4,6 +4,7 @@ import { Inbox, Search, X } from 'lucide-react'
 import { activeMonths, cashFlow, monthSummary, myShare } from '../lib/selectors'
 import { currentMonthKey, dayLabel, monthKeyOf, monthLabel } from '../lib/date'
 import { useStore } from '../lib/store'
+import { confirm, toast } from '../ui/feedback'
 import { useUI } from '../lib/ui'
 import type { Transaction } from '../lib/types'
 import { Money } from '../ui/Money'
@@ -14,6 +15,7 @@ import { haptic } from '../ui/haptics'
 import { springSoft } from '../ui/motion'
 import { cx } from '../ui/cx'
 import { Screen, ScreenTitle } from '../components/Screen'
+import { SwipeRow } from '../ui/SwipeRow'
 import { TransactionRow } from '../components/TransactionRow'
 
 type Filter = 'all' | 'expense' | 'income'
@@ -24,11 +26,15 @@ export function Activity() {
   const month = useUI((s) => s.month)
   const setMonth = useUI((s) => s.setMonth)
   const openEntry = useUI((s) => s.openEntry)
+  const deleteTransaction = useStore((s) => s.deleteTransaction)
+  const addTransaction = useStore((s) => s.addTransaction)
 
   const [filter, setFilter] = useState<Filter>('all')
   const [categoryId, setCategoryId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
+  /** only one row may sit open at a time */
+  const [swipedId, setSwipedId] = useState<string | null>(null)
 
   const months = useMemo(
     () => activeMonths(transactions, currentMonthKey()),
@@ -74,6 +80,30 @@ export function Activity() {
   // When a category filter is on, the interesting number is what that category
   // cost, not its effect on the month — so this one stays a plain sum.
   const filteredTotal = visible.reduce((sum, t) => sum + myShare(t), 0)
+
+  /**
+   * Reached by swiping a row aside and tapping Delete, so it is already two
+   * deliberate actions. A split entry also moves what somebody owes, which is
+   * not visible from this screen, so that one asks first.
+   */
+  async function removeTransaction(tx: Transaction) {
+    if (tx.split) {
+      const ok = await confirm({
+        title: 'Delete this shared entry?',
+        body: 'It will also come off the balance with whoever you split it with.',
+        confirmLabel: 'Delete',
+        danger: true,
+      })
+      if (!ok) return
+    }
+    deleteTransaction(tx.id)
+    toast('Entry deleted', {
+      undo: () => {
+        const { id: _id, createdAt: _c, updatedAt: _u, ...rest } = tx
+        addTransaction(rest)
+      },
+    })
+  }
 
   return (
     <Screen>
@@ -208,18 +238,37 @@ export function Activity() {
               <motion.section layout key={date} transition={springSoft}>
                 <div className="mb-2 flex items-baseline justify-between px-2">
                   <h2 className="text-[12.5px] font-semibold text-dim">{dayLabel(date)}</h2>
+                  {/* A day can net to zero while money still moved — spending out of
+                      savings does not touch the month. Green would claim a gain. */}
                   <Money
                     value={dayTotal}
-                    tone={dayTotal >= 0 ? 'pos' : 'dim'}
+                    tone={dayTotal > 0 ? 'pos' : 'dim'}
                     signed
                     compactCents
                     className="text-[12.5px]"
                   />
                 </div>
                 <Card className="divide-y divide-line-soft overflow-hidden">
+                  <AnimatePresence initial={false}>
                   {list.map((tx) => (
-                    <TransactionRow key={tx.id} tx={tx} onClick={(t) => openEntry({ tx: t })} />
+                    <motion.div
+                      key={tx.id}
+                      layout
+                      // a plain tween, not a spring: the row has to be gone in a
+                      // known amount of time, whatever the device is doing
+                      exit={{ height: 0, opacity: 0, transition: { duration: 0.18, ease: 'easeOut' } }}
+                      className="overflow-hidden"
+                    >
+                    <SwipeRow
+                      open={swipedId === tx.id}
+                      onOpenChange={(o) => setSwipedId(o ? tx.id : null)}
+                      onDelete={() => removeTransaction(tx)}
+                    >
+                      <TransactionRow tx={tx} onClick={(t) => openEntry({ tx: t })} />
+                    </SwipeRow>
+                    </motion.div>
                   ))}
+                  </AnimatePresence>
                 </Card>
               </motion.section>
             )

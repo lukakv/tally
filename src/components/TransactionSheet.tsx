@@ -261,15 +261,17 @@ export function TransactionSheet({
           ) : undefined
         }
       >
-        {/* amount — grows to fill whatever the keypad and form leave over */}
-        <div className="flex min-h-[104px] flex-1 flex-col justify-center px-5 py-3 text-center">
+        {/* Amount and form share one scroll region so a short screen can never
+            strand the Save button below the fold. */}
+        <div className="no-scrollbar flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <div className="flex min-h-[clamp(64px,11dvh,116px)] shrink-0 flex-col justify-center px-5 py-3 text-center">
           <motion.div
             key={bump}
             initial={{ scale: 0.985 }}
             animate={{ scale: 1 }}
             transition={springBouncy}
             className={cx(
-              'tnum text-[46px] leading-none font-semibold tracking-[-0.035em]',
+              'tnum text-[clamp(32px,5.6dvh,46px)] leading-none font-semibold tracking-[-0.035em]',
               amount > 0 ? (kind === 'income' ? 'text-pos' : 'text-text') : 'text-faint',
             )}
           >
@@ -300,8 +302,8 @@ export function TransactionSheet({
           </AnimatePresence>
         </div>
 
-        {/* form — pinned directly above the keypad */}
-        <div className="no-scrollbar shrink-0 space-y-3 overflow-y-auto px-5 pb-2">
+        {/* form */}
+        <div className="shrink-0 space-y-3 px-5 pb-2">
           <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5">
             {ofKind.slice(0, 8).map((c) => {
               const active = c.id === category?.id
@@ -455,7 +457,9 @@ export function TransactionSheet({
           )}
         </div>
 
-        {/* keypad */}
+        </div>
+
+        {/* keypad — always pinned, always reachable */}
         <div className="safe-b shrink-0 px-5 pt-2 pb-3">
           <AmountKeypad onKey={press} onClear={() => setRaw('')} />
           <Button

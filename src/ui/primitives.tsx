@@ -96,11 +96,13 @@ export function SectionLabel({
   className?: string
 }) {
   return (
-    <div className={cx('flex items-end justify-between px-1 pb-2.5', className)}>
-      <h2 className="text-[12px] font-semibold tracking-[0.09em] text-faint uppercase">
+    // negative margin keeps the label optically aligned while the action
+    // still gets a full-size touch target around its small text
+    <div className={cx('-my-1.5 flex items-center justify-between px-1 pb-1', className)}>
+      <h2 className="py-1.5 text-[12px] font-semibold tracking-[0.09em] text-faint uppercase">
         {children}
       </h2>
-      {action}
+      {action && <div className="[&>button]:-mr-2 [&>button]:px-2 [&>button]:py-1.5">{action}</div>}
     </div>
   )
 }
