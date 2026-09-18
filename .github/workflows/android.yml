@@ -27,7 +27,14 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # The action's default package list still asks for "tools", which Google
+      # retired from the SDK repository — sdkmanager exits 1 and takes the build
+      # with it. Only platform-tools is requested here; the Android Gradle
+      # plugin downloads whichever platform and build-tools it needs, now that
+      # the licences are accepted.
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       # The android/ project is generated here rather than committed, so the
       # repository stays a plain web app. @capacitor/assets reads the source
