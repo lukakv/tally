@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import { persist, createJSONStorage, type StateStorage } from 'zustand/middleware'
 import { del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval'
 import { uid } from './id'
-import { DEFAULT_CATEGORIES, DEFAULT_SETTINGS, PERSON_COLORS, POT_COLORS, defaultPot } from './seed'
+import { PERSON_COLORS, POT_COLORS } from './seed'
+import { SCHEMA_VERSION, emptyData, migrate, type LegacyData } from './migrate'
 import {
   type AppData,
   type Category,
@@ -15,7 +16,6 @@ import {
 } from './types'
 
 const STORE_KEY = 'tally-store-v1'
-export const SCHEMA_VERSION = 2
 
 const idbStorage: StateStorage = {
   getItem: async (name) => (await idbGet<string>(name)) ?? null,
@@ -69,70 +69,7 @@ interface Actions {
 
 export type Store = AppData & Actions
 
-const emptyData = (): AppData => ({
-  version: SCHEMA_VERSION,
-  transactions: [],
-  categories: DEFAULT_CATEGORIES.map((c) => ({ ...c })),
-  people: [],
-  settlements: [],
-  savingsPots: [defaultPot(DEFAULT_SETTINGS.currency)],
-  savingsEntries: [],
-  budgets: {},
-  budgetOverrides: {},
-  settings: { ...DEFAULT_SETTINGS },
-})
-
-/**
- * Anything an older version might have written: every field optional, and
- * settings loose enough to still carry v1's single openingSavings figure.
- */
-export type LegacyData = Omit<Partial<AppData>, 'settings'> & {
-  settings?: Partial<Settings> & { openingSavings?: number }
-}
-
-/**
- * Brings any older shape forward. Used both when rehydrating this device and
- * when importing a backup written by an earlier version, so there is one
- * upgrade path rather than two that can drift.
- */
-export function migrate(raw: LegacyData): AppData {
-  const base = emptyData()
-  const settings = { ...base.settings, ...(raw.settings ?? {}) }
-  const currency = settings.currency
-  settings.rates = settings.rates ?? {}
-
-  let pots = raw.savingsPots?.length ? raw.savingsPots : []
-  if (!pots.length) {
-    // v1 kept a single opening figure on settings; it becomes the main pot.
-    pots = [defaultPot(currency, raw.settings?.openingSavings ?? 0)]
-  }
-  // guarantee a landing place for monthly transfers
-  if (!pots.some((p) => p.currency === currency && !p.archived)) {
-    pots = [defaultPot(currency), ...pots]
-  }
-
-  delete (settings as { openingSavings?: number }).openingSavings
-
-  const mainPot = pots.find((p) => p.currency === currency && !p.archived) ?? pots[0]
-
-  return {
-    version: SCHEMA_VERSION,
-    transactions: (raw.transactions ?? []).map((t) =>
-      // v1 transactions knew nothing about pots
-      t.kind === 'expense' && (t.isSaving || t.account === 'savings') && !t.savingsPotId
-        ? { ...t, savingsPotId: mainPot.id }
-        : t,
-    ),
-    categories: raw.categories?.length ? raw.categories : base.categories,
-    people: raw.people ?? [],
-    settlements: raw.settlements ?? [],
-    savingsPots: pots,
-    savingsEntries: raw.savingsEntries ?? [],
-    budgets: raw.budgets ?? {},
-    budgetOverrides: raw.budgetOverrides ?? {},
-    settings,
-  }
-}
+export { SCHEMA_VERSION, migrate } from './migrate'
 
 export const useStore = create<Store>()(
   persist(
@@ -338,7 +275,11 @@ export const useStore = create<Store>()(
       // same upgrade path as locally stored data
       replaceAll: (data) => set(migrate(data as LegacyData)),
 
-      resetAll: () => set({ ...emptyData(), settings: { ...DEFAULT_SETTINGS, onboarded: true } }),
+      // a reset keeps the person past onboarding — they have already seen it
+      resetAll: () => {
+        const fresh = emptyData()
+        set({ ...fresh, settings: { ...fresh.settings, onboarded: true } })
+      },
     }),
     {
       name: STORE_KEY,

@@ -14,7 +14,7 @@ import {
   savingsOverview,
   splitOverview,
 } from './selectors'
-import { migrate } from './store'
+import { migrate } from './migrate'
 import { DEFAULT_CATEGORIES, SAVINGS_CATEGORY_ID } from './seed'
 import {
   ME,
